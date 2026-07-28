@@ -63,6 +63,7 @@ def convert(lay_path: Path, output_path: Path, config: Config) -> Path:
         compression_level=config.compression_level,
         target_chunk_bytes=config.target_chunk_bytes,
         write_comments=config.write_comments,
+        write_subject_metadata=config.write_subject_metadata,
     )
 
 

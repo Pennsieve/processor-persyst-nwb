@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 
 import numpy as np
 import pytest
+from nwbinspector import Importance, inspect_nwbfile
 from pynwb import NWBHDF5IO
 from pynwb.ecephys import ElectricalSeries
 
@@ -31,6 +32,52 @@ UNIT_TO_UV = {
     "microvolts": 1,
     "uv": 1,
 }
+
+EXPECTED_DEVIATIONS = frozenset(
+    {
+        # Persyst records no species, and [Patient] is absent or blank in each
+        # real fixture. The converter cannot supply either value.
+        "check_subject_exists",
+        "check_subject_species_exists",
+        # A Subject with some fields set gives these two messages.
+        # HUP1234_2000_02.lay has that form: [Patient] ID has a value, but Sex
+        # and Birthdate are blank. To omit the Subject and stop the messages also
+        # removes the one identifier that the header holds.
+        "check_subject_age",
+        "check_subject_sex",
+        # A Persyst point annotation has duration 0, so stop_time equals
+        # start_time. To discard or extend such an interval changes the event.
+        "check_time_intervals_stop_after_start",
+    }
+)
+"""The nwbinspector checks that this converter cannot satisfy.
+
+Any other message at BEST_PRACTICE_VIOLATION or above is a defect. That level is
+necessary, because ``check_timestamps_ascending`` is at BEST_PRACTICE_VIOLATION
+and not at CRITICAL. A filter that used CRITICAL only cannot find timestamps
+that decrease, which is the failure that this check must catch.
+"""
+
+
+def assert_valid_nwb(path, *, allow=()):
+    """Fail if the file does not pass nwbinspector and schema validation.
+
+    ``inspect_nwbfile`` also runs the pynwb schema validator. This function is
+    therefore the only check of output validity.
+    """
+    permitted = EXPECTED_DEVIATIONS | set(allow)
+    messages = [
+        message
+        for message in inspect_nwbfile(
+            nwbfile_path=str(path),
+            importance_threshold=Importance.BEST_PRACTICE_VIOLATION,
+        )
+        if message.check_function_name not in permitted
+    ]
+    assert not messages, "invalid NWB output:\n" + "\n".join(
+        f"  [{m.importance.name}] {m.check_function_name}: {m.message}"
+        for m in messages
+    )
 
 
 def infer_sampling_rate(timestamps):
@@ -125,6 +172,7 @@ def convert_and_open(tmp_path, persyst_pair, **pair_kwargs):
 
     produced = [p for p in out_dir.iterdir() if p.suffix.lower() == ".nwb"]
     assert len(produced) == 1
+    assert_valid_nwb(produced[0])
 
     io = NWBHDF5IO(str(produced[0]), mode="r")
     nwb = io.read()
@@ -161,6 +209,90 @@ def test_gapped_recording_splits_into_segments(tmp_path, persyst_pair):
         (500, 750),
         (750, 1000),
     ]
+    io.close()
+
+
+def test_gapped_recording_whose_sample_times_start_late(tmp_path, persyst_pair):
+    """[SampleTimes] starts after sample 0, and the recording has a real gap.
+
+    The converter must calculate the time of the first span backward from the
+    first entry. If it uses the time of that entry, two spans get the same
+    offset. The timestamps then decrease, and the segment split is wrong.
+    """
+    io, reader = convert_and_open(
+        tmp_path,
+        persyst_pair,
+        n_samples=1000,
+        rate=250.0,
+        segments=[(100, 0.0), (500, 100.0)],
+    )
+    timestamps = reader.get_timestamps(0, reader.num_samples)
+    assert np.all(np.diff(timestamps) > 0), "timestamps must increase"
+    # Samples 0..499 are contiguous once the leading span is extrapolated
+    # correctly; the 98.4 s gap at sample 500 is the only real break.
+    assert list(reader.contiguous_chunks()) == [(0, 500), (500, 1000)]
+    io.close()
+
+
+def test_permuted_channel_map_pairs_labels_with_the_right_column(
+    tmp_path, persyst_pair
+):
+    """A [ChannelMap] that is not in index order must not mislabel a column.
+
+    The index is the 1-based interleave position. The entry ``Fp2=1`` therefore
+    owns column 0 for any order of the lines. ``ramp_samples`` shows an exchange
+    of two columns, because column c holds ``c * 1000 + i``.
+    """
+    persyst_pair(tmp_path, stem="rec", n_samples=200, channels=("x",) * 4)
+    # Rewrite [ChannelMap] with the labels in reverse index order.
+    lay = tmp_path / "rec.lay"
+    head = lay.read_text().split("[ChannelMap]")[0]
+    lay.write_text(
+        head + "[ChannelMap]\nFp1=4\nFp2=3\nC3=2\nC4=1\n",
+    )
+
+    out_dir = tmp_path / "out"
+    env = {
+        "INPUT_DIR": str(tmp_path),
+        "OUTPUT_DIR": str(out_dir),
+        "PERSYST_TIMEZONE": "UTC",
+    }
+    assert main([], env) == 0
+    produced = next(out_dir.glob("*.nwb"))
+    assert_valid_nwb(produced)
+
+    io = NWBHDF5IO(str(produced), mode="r")
+    nwb = io.read()
+    series = next(iter(nwb.acquisition.values()))
+    reader = NwbTimeseriesReader(series, nwb.session_start_time)
+
+    assert reader.channel_names() == ["C4", "C3", "Fp2", "Fp1"]
+    for column, channel in enumerate(reader.get_chunk()):
+        assert channel[0] == pytest.approx(column * 1000 * 0.2), (
+            f"column {column} holds the wrong channel"
+        )
+    io.close()
+
+
+def test_patient_with_only_an_id_still_validates(tmp_path, persyst_pair):
+    """The form of HUP1234: [Patient] ID has a value, Sex and Birthdate do not.
+
+    A Subject with some fields set gives different validator messages than a
+    complete Subject or no Subject. The real files have this form.
+    """
+    io, reader = convert_and_open(
+        tmp_path,
+        persyst_pair,
+        n_samples=500,
+        patient={
+            "ID": "HUP1234",
+            "Birthdate": "",
+            "Sex": "",
+            "TestDate": "02/06/2000",
+            "TestTime": "04:59:59.964000",
+        },
+    )
+    assert reader.num_samples == 500
     io.close()
 
 

@@ -224,6 +224,58 @@ def test_timestamps_chunked_and_compressed(tmp_path, persyst_pair):
         assert ts.chunks is not None
 
 
+def test_timestamps_are_written_in_chunks_not_all_at_once(
+    tmp_path, persyst_pair, monkeypatch
+):
+    """The writer must stream the timestamps, as it streams the samples.
+
+    One float64 timestamp uses 8 bytes per sample. For a 4-channel int16
+    recording, the full array is as large as the .dat file. This test records the
+    largest window that the writer requests, which is a repeatable measure of the
+    memory that the writer needs.
+    """
+    requested = []
+    original = PersystReader.timestamps_window
+
+    def spy(self, start, stop):
+        requested.append(stop - start)
+        return original(self, start, stop)
+
+    monkeypatch.setattr(PersystReader, "timestamps_window", spy)
+    out = convert(
+        tmp_path,
+        persyst_pair,
+        n_samples=5000,
+        rate=250.0,
+        segments=GAP_SEGMENTS,
+        writer={"target_chunk_bytes": 4096},
+    )
+
+    assert requested, "the writer never asked for a timestamp window"
+    # 4096 bytes / (4 channels x 2 bytes) = 512 samples per chunk.
+    assert max(requested) == 512
+    with h5py.File(out) as f:
+        ts = f["acquisition/ElectricalSeries/timestamps"]
+        assert ts.shape == (5000,)
+        assert ts.chunks == (512,)
+
+
+def test_streamed_timestamps_match_a_single_pass(tmp_path, persyst_pair):
+    """A write in chunks must give the same array as one pass."""
+    lay, _ = persyst_pair(
+        tmp_path, n_samples=5000, rate=250.0, segments=GAP_SEGMENTS
+    )
+    reader = PersystReader(lay, timezone=UTC_ZONE)
+    out = tmp_path / "out.nwb"
+    write_nwb(reader, out, identifier="persyst_test", target_chunk_bytes=4096)
+
+    io, _, series = read_series(out)
+    np.testing.assert_array_equal(
+        np.asarray(series.timestamps[:]), reader.timestamps_seconds()
+    )
+    io.close()
+
+
 def test_comments_written_as_time_intervals(tmp_path, persyst_pair):
     comments = [
         (16479.035, 1579.058, "Impedance Test On"),
@@ -300,16 +352,68 @@ def test_subject_omitted_when_patient_is_blank(tmp_path, persyst_pair):
     io.close()
 
 
+PATIENT_2000 = {
+    "ID": "HUP1234",
+    "Sex": "m",
+    "BirthDate": "01/02/80",
+    "TestDate": "02/06/2000",
+    "TestTime": "04:59:59.964000",
+}
+"""A [Patient] section with a recording date, to validate a date of birth."""
+
+
 def test_subject_populated_from_patient(tmp_path, persyst_pair):
-    out = convert(
-        tmp_path,
-        persyst_pair,
-        patient={"ID": "HUP1234", "Sex": "m", "BirthDate": "01/02/80"},
-    )
+    out = convert(tmp_path, persyst_pair, patient=PATIENT_2000)
     io, nwb, _ = read_series(out)
     assert nwb.subject.subject_id == "HUP1234"
     assert nwb.subject.sex == "M"
     assert nwb.subject.date_of_birth.year == 1980
+    io.close()
+
+
+def test_subject_metadata_can_be_switched_off(tmp_path, persyst_pair):
+    """A date of birth is a HIPAA Safe Harbor identifier, so make it optional.
+
+    The default is on. A workflow that publishes outside the PHI boundary sets
+    WRITE_SUBJECT_METADATA to false.
+    """
+    out = convert(
+        tmp_path,
+        persyst_pair,
+        patient=PATIENT_2000,
+        writer={"write_subject_metadata": False},
+    )
+    io, nwb, _ = read_series(out)
+    assert nwb.subject is None
+    io.close()
+
+
+def test_subject_metadata_written_by_default(tmp_path, persyst_pair):
+    out = convert(tmp_path, persyst_pair, patient=PATIENT_2000)
+    io, nwb, _ = read_series(out)
+    assert nwb.subject is not None
+    io.close()
+
+
+@pytest.mark.parametrize("birthdate", ["01/02/40", "01/02/68", "01/02/2055"])
+def test_birth_date_after_the_recording_is_dropped(
+    tmp_path, persyst_pair, caplog, birthdate
+):
+    """strptime reads 68 or less as 20xx, so 01/02/40 gives 2040, not 1940.
+
+    A date of birth at or after the recording is not possible. The writer
+    therefore omits that field, and does not write a date in the future. It keeps
+    the other subject fields.
+    """
+    out = convert(
+        tmp_path,
+        persyst_pair,
+        patient={**PATIENT_2000, "BirthDate": birthdate},
+    )
+    io, nwb, _ = read_series(out)
+    assert nwb.subject.subject_id == "HUP1234"
+    assert nwb.subject.date_of_birth is None
+    assert "omitting date_of_birth" in caplog.text
     io.close()
 
 
@@ -321,6 +425,49 @@ def test_session_description_records_start_source(tmp_path, persyst_pair):
     )
     io, nwb, _ = read_series(out)
     assert "TestDate" in nwb.session_description
+    io.close()
+
+
+def test_failed_write_leaves_no_file_behind(
+    tmp_path, persyst_pair, monkeypatch
+):
+    """HDF5 empties the target on open, so a write in place corrupts the file.
+
+    A non-zero exit code must mean that the converter produced nothing usable. It
+    must not leave an incomplete .nwb file in OUTPUT_DIR for the next stage.
+    """
+    lay, _ = persyst_pair(tmp_path)
+    reader = PersystReader(lay, timezone=UTC_ZONE)
+    out = tmp_path / "out.nwb"
+
+    def boom(self, *args, **kwargs):
+        raise OSError("no space left on device")
+
+    monkeypatch.setattr(NWBHDF5IO, "write", boom)
+    with pytest.raises(OSError, match="no space left"):
+        write_nwb(reader, out, identifier="persyst_test")
+
+    assert not out.exists()
+    assert list(tmp_path.glob("*.partial")) == []
+
+
+def test_out_of_range_count_accounts_for_gaps(tmp_path, persyst_pair, caplog):
+    """An annotation in a gap is inside the recording, and not outside it.
+
+    At 250 Hz, 500 samples give 2 s of data. With the gap, the recording spans
+    501 s. The annotation at 300 s is therefore in range.
+    """
+    out = convert(
+        tmp_path,
+        persyst_pair,
+        n_samples=500,
+        rate=250.0,
+        segments=[(0, 0.0), (250, 500.0)],
+        comments=[(300.0, 0.0, "inside the gap")],
+    )
+    io, nwb, _ = read_series(out)
+    assert len(nwb.intervals["persyst_comments"]) == 1
+    assert "fall outside" not in caplog.text
     io.close()
 
 

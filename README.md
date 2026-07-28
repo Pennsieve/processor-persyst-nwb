@@ -42,12 +42,33 @@ so you can set these per workflow.
 |---|---|---|
 | `INPUT_DIR` | `/data/input` | Directory that holds one `.lay` file and its `.dat` file |
 | `OUTPUT_DIR` | `/data/output` | Directory to write the NWB file to |
-| `OUTPUT_FILENAME` | `<lay stem>.nwb` | Name of the output file |
+| `OUTPUT_FILENAME` | `<lay stem>.nwb` | Name of the output file. Must be a bare filename |
 | `PERSYST_TIMEZONE` | `UTC` | Time zone for `TestDate` and `TestTime` |
 | `CHUNK_TARGET_BYTES` | `4194304` | Target size of one HDF5 chunk |
 | `COMPRESSION_LEVEL` | `4` | gzip level. Set to `0` to disable compression |
 | `STRIP_REF_SUFFIX` | `false` | Write channel `Fp1-Ref` as `Fp1` |
 | `WRITE_COMMENTS` | `true` | Write `[Comments]` as a `TimeIntervals` table |
+| `WRITE_SUBJECT_METADATA` | `true` | Write the `[Patient]` subject block. See below |
+
+A boolean setting accepts `true` or `false`, `1` or `0`, `yes` or `no`, `on` or `off`. Any
+other value is an error. A typo in `WRITE_COMMENTS` therefore stops the run. It does not
+discard the annotations.
+
+`OUTPUT_FILENAME` must be a bare filename. The converter rejects an absolute path, and a path
+that contains `..`, because such a value writes the file outside `OUTPUT_DIR`.
+
+### Patient identifiers
+
+`WRITE_SUBJECT_METADATA` controls the NWB `Subject` block. That block holds `[Patient] ID` as
+`subject_id`, and `[Patient] BirthDate` as `date_of_birth`. The default is `true`. A date of
+birth is a HIPAA Safe Harbor identifier. Set this variable to `false` if the output of your
+workflow goes outside the PHI boundary.
+
+Persyst writes a two-digit year. Python reads a two-digit year of 69 or more as 19xx, and a
+year of 68 or less as 20xx. The value `01/02/40` therefore gives 2040, not 1940. A date of
+birth at or after the recording is not possible. The converter discards such a date and writes
+a warning. `TestDate` has the same ambiguity. No other field contradicts it, so the converter
+keeps that value.
 
 ## Output format
 
@@ -70,6 +91,15 @@ A recording with gaps gets one timestamp per sample instead.
 A constant rate asserts uniform sampling and cannot express a gap,
 so a recording with gaps must carry timestamps.
 
+The converter writes the timestamps in chunks, as it writes the samples. One `float64`
+timestamp uses 8 bytes per sample. For a 4-channel int16 recording, the full array of
+timestamps is as large as the `.dat` file. The converter therefore does not build that array
+in memory.
+
+The output path holds a complete file, or no file. HDF5 empties the target file when it opens
+it. The converter therefore writes to a temporary file in the same directory, then renames it.
+A failed run leaves no file for the next stage to read.
+
 **Channels.** The electrodes table has one row for each data column. The `channel_name`
 column holds the label from the header, unchanged. The `group_name` column comes from the
 electrode group, which `pynwb` fills in.
@@ -86,10 +116,19 @@ and records the source in `session_description`:
 **Annotations.** The `[Comments]` entries become a `TimeIntervals` table named
 `persyst_comments` in `/intervals`, with `start_time`, `stop_time`, and `label` columns. The
 table sits outside `/acquisition`, so a reader that scans for signal data cannot mistake it
-for a recording. The converter keeps annotations that fall outside the recording and logs how
-many there were. If a recording has no comments, the converter omits the table. A
-`TimeIntervals` table that has a custom column and no rows cannot resolve the column type,
-and the write fails.
+for a recording. The converter keeps annotations that fall outside the recording, and logs how
+many there were. It counts them against the time the recording spans, which includes the gaps,
+and not against the number of samples. If a recording has no comments, the converter omits the
+table. A `TimeIntervals` table that has a custom column and no rows cannot resolve the column
+type, and the write fails.
+
+The converter writes each onset as the header states it. The Persyst comment epoch does not
+always agree with the samples in the `.dat` file. In `test-persyst.lay`, `[SampleTimes]` starts
+at 102903 s and the comments run from -63881 s to 188452 s. The samples cover 3796 s. That
+`.dat` file is an extract of a longer session, but the annotations describe all of the session.
+No field in the header gives the offset between the two epochs. The converter therefore does
+not apply an offset, because a wrong offset moves an annotation to a wrong time. A clipped
+recording gives the out-of-range warning.
 
 ## Persyst format
 
@@ -97,7 +136,7 @@ The `[FileInfo]` section is the only section that the converter requires.
 
 | Key | Meaning | Notes |
 |---|---|---|
-| `File` | Name of the `.dat` file | Can be an absolute Windows path. The case can differ from the file on disk |
+| `File` | Name of the `.dat` file | Can be an absolute Windows path. The case can differ from the file on disk. If that file is absent, the converter accepts only a sibling `.dat` file with the same stem as the `.lay` file |
 | `FileType` | `Interleaved` or `32BitInterleaved` | Used only if `DataType` is absent |
 | `SamplingRate` | Sample rate in Hz | One rate applies to all channels |
 | `HeaderLength` | Byte offset into the `.dat` file | Usually 0. The converter applies it |
@@ -116,6 +155,13 @@ The recovered frequencies then double. The file size cannot show which width is 
 because these files divide evenly at both widths. A test converts known sine waves and checks
 the frequencies that the converter recovers.
 
+**Channel order.** Each `[ChannelMap]` entry has the form `Label=Index`. The index is the
+1-based position of the label in the interleaved `.dat` file. The converter sorts the channels
+by this index. It does not use the order of the lines in the file. If the two orders differ,
+the converter writes a warning. Most files list the entries in index order. If the converter
+used the line order, it could attach each label to the wrong column. The indices must be a
+permutation of 1..n. A sparse map is an error, because the interleave width is then ambiguous.
+
 **Segments.** The `[SampleTimes]` section maps a start sample index to a segment start time.
 The epoch of that time differs between recordings. In some files it is a Unix timestamp that
 matches `TestDate` and `TestTime`. In others it is neither a Unix timestamp nor a count of
@@ -129,6 +175,20 @@ The converter therefore snaps a segment boundary to the exact time when the
 boundary is within tolerance of where continuous sampling would place it.
 Without this step, a continuous 2048 Hz recording reports false gaps,
 and can produce timestamps that do not increase.
+
+NWB requires timestamps that increase. Two more cases can break this rule.
+
+First, `[SampleTimes]` does not always start at sample 0. The converter adds a span for the
+samples before the first entry. It calculates the time of that span backward from the first
+entry at the sample rate.
+
+Second, the entry times can be in order and still describe an overlap. At 250 Hz, 250 samples
+fill one second. An entry 0.5 s after the previous entry therefore covers samples that the
+previous segment also covers. The converter moves such a boundary forward to the end of the
+previous segment, and writes a warning.
+
+The spans always cover the recording in order, and their offsets never decrease. The converter
+checks these two properties before it writes the file.
 
 **Comments.** Each `[Comments]` row has the form `onset,duration,state,var_type,text`, not
 `key=value`. The text can contain commas, colons, and backslashes. Some recordings store
@@ -212,6 +272,7 @@ make typecheck   # run mypy --strict
 make lint        # run ruff check --fix and ruff format
 make check       # run ruff check, ruff format --check, mypy, and the tests
 make pre-commit  # install the pre-commit hook
+make lock        # regenerate the dependency locks
 ```
 
 The repository contains no Persyst recordings. The tests write `.lay` and `.dat` files into a
@@ -222,7 +283,30 @@ NWB reader. That reader pairs electrodes with data columns, derives the sample r
 the samples at gaps, and scales the values to microvolts. A change that breaks a real reader
 fails this test first.
 
+The tests also check each conversion with the `pynwb` schema validator and with
+`nwbinspector`, at the `BEST_PRACTICE_VIOLATION` level and above. This level is necessary,
+because `check_timestamps_ascending` is below the `CRITICAL` level. A filter that used
+`CRITICAL` only cannot find timestamps that do not increase. `EXPECTED_DEVIATIONS` lists the
+checks that Persyst data cannot satisfy, such as the species and the usually blank `[Patient]`
+section. Each entry gives the reason.
+
 ## Dependencies
 
 The converter requires `numpy`, `pynwb`, `hdmf`, and `tzdata`. Development and testing also
-require `pytest`, `pytest-cov`, `mypy`, `ruff`, `pre-commit`, and `mne`.
+require `pytest`, `pytest-cov`, `nwbinspector`, `mypy`, `ruff`, `pre-commit`, and `mne`.
+
+`processor/requirements.txt` and `requirements-test.txt` hold the version ranges.
+`processor/requirements.lock` and `requirements-test.lock` pin each transitive version with a
+hash. All installs use these lock files with `--require-hashes`. The container, the CI
+workflow, and `make venv` use the same lock files. The tests therefore run against the same
+versions that the image contains. A new release of `pynwb` or `hdmf` cannot change the output
+until you update a lock file.
+
+To update the lock files, run `make lock`. This target resolves the versions in the base image
+of the Dockerfile, which is pinned by digest. The pins therefore match the container, and not
+your local machine. `pytest.ini` does not filter `DeprecationWarning`. An upstream deprecation
+is therefore visible when you update a lock file.
+
+The image runs as an unprivileged user, and it works with any UID. The `import pynwb` statement
+writes a schema cache before the converter starts. The build creates this cache and keeps it
+writable. The CI workflow converts a recording with an arbitrary UID to test this.

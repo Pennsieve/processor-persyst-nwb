@@ -79,6 +79,26 @@ def test_empty_channelmap_raises(lay_text):
         parse_layout(text)
 
 
+def test_channel_names_ordered_by_index_not_file_order(caplog):
+    """The [ChannelMap] value is the interleave position, so it must be honored.
+
+    Returning labels in file order while merely *validating* the indices puts
+    every label on the wrong data column -- a silent channel swap.
+    """
+    text = (
+        "[FileInfo]\nFile=a.dat\nSamplingRate=250\nCalibration=1\nDataType=0\n"
+        "[ChannelMap]\nFp1=2\nFp2=1\nC3=4\nC4=3\n"
+    )
+    assert parse_layout(text).channel_names == ("Fp2", "Fp1", "C4", "C3")
+    assert "not in index order" in caplog.text
+
+
+def test_channel_names_in_index_order_are_not_reordered(lay_text, caplog):
+    layout = parse_layout(lay_text(channels=("A", "B", "C")))
+    assert layout.channel_names == ("A", "B", "C")
+    assert "not in index order" not in caplog.text
+
+
 def test_non_sequential_channel_indices_raise():
     # A sparse map leaves the interleave width ambiguous, and file size cannot
     # disambiguate it, so guessing would silently mis-decode.

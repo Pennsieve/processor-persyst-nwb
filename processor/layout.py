@@ -246,31 +246,49 @@ def _resolve_dtype(datatype: str | None, file_type: str) -> SampleDtype:
 def _build_channel_names(
     entries: Sequence[tuple[str, str]],
 ) -> tuple[str, ...]:
-    """Extract channel labels from ``[ChannelMap]`` in file order.
+    """Extract channel labels from ``[ChannelMap]``, ordered by index.
+
+    The value of each entry is the 1-based position of the label in the
+    interleaved ``.dat``. That value, and not the order of the lines, gives the
+    data column for each label. Most files list the entries in index order. If
+    this function used the line order, it could attach each label to the wrong
+    column and give no error.
 
     Labels keep their original case and inner spacing (``Fp1-Ref``,
     ``Lhip1 - Lhip2``, ``Sin 20Hz``). Raise ValueError when the section is empty
     or its indices are not exactly 1..n, because a sparse map leaves the
     interleave width ambiguous and file size alone cannot disambiguate it.
     """
-    names = tuple(key.strip() for key, _ in entries if key.strip())
-    if not names:
+    labelled = []
+    for key, value in entries:
+        name = key.strip()
+        if not name:
+            continue
+        try:
+            index = int(value)
+        except ValueError:
+            index = -1
+        labelled.append((index, name))
+
+    if not labelled:
         raise ValueError(".lay file has no [ChannelMap] entries")
 
-    indices = []
-    for _, value in entries:
-        try:
-            indices.append(int(value))
-        except ValueError:
-            indices.append(-1)
-
-    if sorted(indices) != list(range(1, len(names) + 1)):
+    indices = [index for index, _ in labelled]
+    if sorted(indices) != list(range(1, len(labelled) + 1)):
         raise ValueError(
             f"[ChannelMap] indices are non-sequential: {indices!r}; "
-            f"expected a permutation of 1..{len(names)}"
+            f"expected a permutation of 1..{len(labelled)}"
         )
 
-    return names
+    ordered = tuple(name for _, name in sorted(labelled))
+    if ordered != tuple(name for _, name in labelled):
+        logger.warning(
+            "[ChannelMap] is not in index order; ordering %d channel(s) by "
+            "index instead: %.200s",
+            len(ordered),
+            ", ".join(ordered),
+        )
+    return ordered
 
 
 def _build_segments(entries: Sequence[tuple[str, str]]) -> tuple[Segment, ...]:

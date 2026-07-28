@@ -20,6 +20,7 @@ from processor.timebase import (
     resolve_session_start,
     segment_spans,
     timestamps_seconds,
+    timestamps_window,
 )
 
 logger = logging.getLogger(__name__)
@@ -35,8 +36,13 @@ def resolve_dat_path(lay_path: Path, dat_name: str) -> Path:
     ``D:\\Archive\\...\\x.dat``, so the basename is taken by splitting on both
     separators rather than trusting the host's. Matching is case-insensitive
     because real files pair a lower-case ``File=`` with an upper-case ``.DAT`` on
-    disk. When the named file is absent, a sibling ``.dat`` is used instead,
-    preferring one whose stem matches the ``.lay``.
+    disk.
+
+    If the named file is absent, the only permitted substitute is a sibling with
+    the same stem as the ``.lay`` file. This function decodes any file at the
+    channel count, the dtype and the rate of this header. An unrelated ``.dat``
+    file therefore gives output that looks correct but holds the wrong recording.
+    A directory that holds a wrong pair must therefore give an error.
 
     Raise FileNotFoundError when nothing matches and ValueError when several
     siblings are equally plausible.
@@ -50,7 +56,8 @@ def resolve_dat_path(lay_path: Path, dat_name: str) -> Path:
             if candidate.is_file() and candidate.name.lower() == wanted:
                 return candidate
         logger.warning(
-            "lay file names %r but it is not present; falling back to a sibling",
+            "lay file names %r but it is not present; falling back to a "
+            "sibling that matches the lay stem",
             basename,
         )
 
@@ -61,15 +68,21 @@ def resolve_dat_path(lay_path: Path, dat_name: str) -> Path:
     )
     if not siblings:
         raise FileNotFoundError(f"no .dat file alongside {lay_path.name!r}")
-    if len(siblings) == 1:
-        return siblings[0]
 
-    by_stem = [path for path in siblings if path.stem == lay_path.stem]
+    by_stem = [
+        path for path in siblings if path.stem.lower() == lay_path.stem.lower()
+    ]
     if len(by_stem) == 1:
         return by_stem[0]
+    if not by_stem:
+        raise FileNotFoundError(
+            f"no .dat file for {lay_path.name!r}: the header names "
+            f"{basename!r}, which is absent, and no sibling shares the "
+            f"header's stem; found {[path.name for path in siblings]!r}"
+        )
     raise ValueError(
         f"cannot choose a .dat for {lay_path.name!r}: "
-        f"{[path.name for path in siblings]!r}"
+        f"{[path.name for path in by_stem]!r}"
     )
 
 
@@ -169,13 +182,34 @@ class PersystReader:
         """Seconds of samples the recording holds, ignoring gaps."""
         return self.n_samples / self.sampling_rate
 
+    @property
+    def recording_end_s(self) -> float:
+        """Seconds from the session start to the last sample, gaps included.
+
+        Annotations use this scale. ``duration_s`` counts only the samples. A gap
+        in a segmented recording can be hours or days, so ``duration_s`` reports
+        a shorter time than the recording spans.
+        """
+        last = self.spans[-1]
+        return last.offset_s + last.n_samples / self.sampling_rate
+
     def has_gaps(self) -> bool:
         """Whether ``[SampleTimes]`` reports a real break between segments."""
         return has_gaps(self.spans, self.sampling_rate)
 
     def timestamps_seconds(self) -> npt.NDArray[np.float64]:
-        """One timestamp per sample, in seconds from the session start."""
+        """One timestamp per sample, in seconds from the session start.
+
+        This method builds the array for the whole recording. The writer streams
+        the timestamps with ``timestamps_window`` instead.
+        """
         return timestamps_seconds(self.spans, self.sampling_rate)
+
+    def timestamps_window(
+        self, start: int, stop: int
+    ) -> npt.NDArray[np.float64]:
+        """Timestamps for samples ``[start, stop)``, seconds from session start."""
+        return timestamps_window(self.spans, self.sampling_rate, start, stop)
 
     def read_window(
         self, start: int, stop: int

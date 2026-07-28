@@ -14,6 +14,7 @@ from processor.timebase import (
     resolve_session_start,
     segment_spans,
     timestamps_seconds,
+    timestamps_window,
 )
 
 UTC_ZONE = ZoneInfo("UTC")
@@ -300,6 +301,24 @@ def test_snapping_logged(caplog):
     assert "snapped" in caplog.text
 
 
+@pytest.mark.parametrize("ticks", ["0", "-5", "1"])
+def test_implausible_filetime_falls_through(lay_text, caplog, ticks):
+    """A FILETIME of 0 converts to 1601 and gives no error, so check the range.
+
+    Without the check, such a value takes precedence over a usable
+    TestDate/TestTime, and the recording gets a date in the 17th century.
+    """
+    layout = _layout(
+        lay_text,
+        np_file_info={"ECoGTimeStampAsUTC": ticks},
+        patient={"TestDate": "01/19/12", "TestTime": "10:50:22"},
+    )
+    start, source = resolve_session_start(layout, UTC_ZONE)
+    assert start == datetime(2012, 1, 19, 10, 50, 22, tzinfo=UTC_ZONE)
+    assert "implausible FILETIME" in caplog.text
+    assert "TestDate" in source
+
+
 def test_unreadable_filetime_falls_through(lay_text, caplog):
     layout = _layout(
         lay_text,
@@ -310,6 +329,38 @@ def test_unreadable_filetime_falls_through(lay_text, caplog):
     assert start == datetime(2012, 1, 19, 10, 50, 22, tzinfo=UTC_ZONE)
     assert "unreadable FILETIME" in caplog.text
     assert "TestDate" in source
+
+
+@pytest.mark.parametrize(
+    ("start", "stop"),
+    [
+        (0, 500),
+        (0, 1),
+        (100, 200),
+        (240, 260),  # straddles the segment boundary at 250
+        (249, 251),
+        (250, 500),
+        (499, 500),
+        (0, 0),
+        (500, 500),
+    ],
+)
+def test_timestamps_window_matches_the_full_array(start, stop):
+    """A window must equal the same slice of the whole recording.
+
+    The writer streams the timestamps one chunk at a time. Each window boundary
+    must therefore give the same values as one pass over the recording. This
+    applies to a boundary inside a segment, and to a boundary on a gap.
+    """
+    spans = segment_spans((Segment(0, 0.0), Segment(250, 100.0)), 500, 250.0)
+    whole = timestamps_seconds(spans, 250.0)
+    window = timestamps_window(spans, 250.0, start, stop)
+    assert np.array_equal(window, whole[start:stop])
+
+
+def test_timestamps_window_dtype_is_float64():
+    spans = segment_spans((Segment(0, 0.0), Segment(250, 100.0)), 500, 250.0)
+    assert timestamps_window(spans, 250.0, 0, 10).dtype == np.float64
 
 
 def test_timestamps_of_empty_spans_is_empty():
@@ -328,3 +379,67 @@ def test_segment_spans_prepends_when_first_key_is_not_zero(caplog):
     assert spans[0].start_sample == 0
     assert "not 0; prepending" in caplog.text
     assert sum(s.n_samples for s in spans) == 1000
+    # The converter must calculate the time of the added span backward from the
+    # first entry. The time of that entry leaves both spans at offset 0.0, and
+    # the timestamps then decrease at sample 100.
+    assert spans[1].offset_s == pytest.approx(100 / 250.0)
+    assert np.all(np.diff(timestamps_seconds(spans, 250.0)) > 0)
+
+
+def test_overlapping_segment_times_are_clamped(caplog):
+    """A second span must not start before the first span ends.
+
+    The [SampleTimes] entries can be in order and still describe an overlap. At
+    250 Hz, 250 samples fill 1.0 s, so an entry 0.5 s later describes samples
+    that the first span also holds. Such an entry gives timestamps that decrease.
+    """
+    segments = (Segment(0, 0.0), Segment(250, 0.5), Segment(400, 1000.0))
+    spans = segment_spans(segments, 600, 250.0)
+    assert [s.offset_s for s in spans] == [0.0, 1.0, 1000.0]
+    assert "overlap" in caplog.text
+    assert np.all(np.diff(timestamps_seconds(spans, 250.0)) > 0)
+    # Clamping must not erase the genuine discontinuity that follows.
+    assert has_gaps(spans, 250.0)
+
+
+def test_overlap_without_a_later_gap_becomes_contiguous(caplog):
+    # has_gaps examines only forward jumps. An overlap that the converter does
+    # not move therefore reaches the constant-rate branch, and the segment
+    # information is lost.
+    segments = (Segment(0, 0.0), Segment(250, 0.5))
+    spans = segment_spans(segments, 500, 250.0)
+    assert [s.offset_s for s in spans] == [0.0, 1.0]
+    assert "overlap" in caplog.text
+    assert not has_gaps(spans, 250.0)
+    assert np.all(np.diff(timestamps_seconds(spans, 250.0)) > 0)
+
+
+@pytest.mark.parametrize(
+    "segments",
+    [
+        (Segment(100, 0.0), Segment(500, 100.0)),
+        (Segment(0, 0.0), Segment(250, 0.5), Segment(400, 1000.0)),
+        (Segment(0, 0.0), Segment(250, 0.5)),
+        (Segment(0, 949813199.964), Segment(22542, 949856397.964)),
+        (Segment(0, 0.0), Segment(100, 1000.0), Segment(250, 2000.0)),
+        (Segment(500, 100.0), Segment(0, 0.0)),
+        (Segment(0, 0.0), Segment(500, 100.0), Segment(500, 200.0)),
+    ],
+)
+@pytest.mark.parametrize("rate", [250.0, 2048.0])
+def test_spans_always_tile_and_advance(segments, rate):
+    """The two rules that each caller needs, for every branch above.
+
+    The spans tile [0, n_samples) exactly, and no span starts before the previous
+    span ends. The per-sample timestamps therefore always increase.
+    """
+    n_samples = 1000
+    spans = segment_spans(segments, n_samples, rate)
+
+    assert spans[0].start_sample == 0
+    assert spans[-1].stop_sample == n_samples
+    assert sum(s.n_samples for s in spans) == n_samples
+    for previous, current in zip(spans, spans[1:], strict=False):
+        assert current.start_sample == previous.stop_sample
+        assert current.offset_s >= previous.offset_s + previous.n_samples / rate
+    assert np.all(np.diff(timestamps_seconds(spans, rate)) > 0)

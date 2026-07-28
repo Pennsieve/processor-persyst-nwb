@@ -153,13 +153,68 @@ def test_no_dat_raises(tmp_path, persyst_pair):
         open_reader(lay)
 
 
-def test_ambiguous_dat_siblings_raise(tmp_path, persyst_pair):
+def test_unrelated_siblings_raise_rather_than_convert(tmp_path, persyst_pair):
+    """No sibling has the lay stem, so there is no safe substitute.
+
+    The reader decodes any file at the channel count, the dtype and the rate of
+    this header. An unrelated .dat file therefore gives output that looks correct
+    but holds the wrong recording.
+    """
     lay, _ = persyst_pair(tmp_path, stem="rec", dat_name="missing.dat")
     (tmp_path / "other.dat").write_bytes(b"\x00" * 64)
     (tmp_path / "third.dat").write_bytes(b"\x00" * 64)
     (tmp_path / "rec.dat").unlink()
+    with pytest.raises(FileNotFoundError, match="no sibling shares"):
+        resolve_dat_path(lay, "missing.dat")
+
+
+def test_sole_unrelated_sibling_dat_raises(tmp_path, persyst_pair):
+    # The earlier version converted this file and gave no error.
+    lay, _ = persyst_pair(tmp_path, stem="rec", dat_name="missing.dat")
+    (tmp_path / "rec.dat").rename(tmp_path / "someone-elses.dat")
+    with pytest.raises(FileNotFoundError, match="no sibling shares"):
+        resolve_dat_path(lay, "missing.dat")
+
+
+def _case_sensitive_filesystem(directory):
+    """Whether ``directory`` can hold two names differing only in case."""
+    probe = directory / "CaseProbe.tmp"
+    probe.write_bytes(b"")
+    try:
+        return not (directory / "caseprobe.tmp").exists()
+    finally:
+        probe.unlink()
+
+
+def test_two_stem_matching_dats_are_ambiguous(tmp_path, persyst_pair):
+    """rec.dat and rec.DAT are equally valid, so the reader must not select one.
+
+    This test needs a filesystem that keeps the two names apart. macOS combines
+    them into one file. The container runs on Linux, which keeps them apart.
+    """
+    if not _case_sensitive_filesystem(tmp_path):
+        pytest.skip("case-insensitive filesystem cannot hold both names")
+    lay, _ = persyst_pair(tmp_path, stem="rec", dat_name="missing.dat")
+    (tmp_path / "rec.DAT").write_bytes(b"\x00" * 64)
     with pytest.raises(ValueError, match="cannot choose a .dat"):
         resolve_dat_path(lay, "missing.dat")
+
+
+def test_gapped_recording_end_includes_the_gaps(tmp_path, persyst_pair):
+    # 500 samples at 250 Hz is 2 s of data, but the second segment starts 500 s
+    # in, so the recording spans 500 s + 1 s.
+    lay, _ = persyst_pair(
+        tmp_path, n_samples=500, rate=250.0, segments=[(0, 0.0), (250, 500.0)]
+    )
+    reader = open_reader(lay)
+    assert reader.duration_s == pytest.approx(2.0)
+    assert reader.recording_end_s == pytest.approx(501.0)
+
+
+def test_contiguous_recording_end_matches_duration(tmp_path, persyst_pair):
+    lay, _ = persyst_pair(tmp_path, n_samples=500, rate=250.0, segments=None)
+    reader = open_reader(lay)
+    assert reader.recording_end_s == pytest.approx(reader.duration_s)
 
 
 def test_sibling_matching_lay_stem_preferred(tmp_path, persyst_pair):

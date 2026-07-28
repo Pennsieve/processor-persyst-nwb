@@ -16,6 +16,8 @@ def test_defaults_match_the_container_mounts():
     assert config.compression_level == DEFAULT_COMPRESSION_LEVEL
     assert config.strip_ref_suffix is False
     assert config.write_comments is True
+    # Subject metadata stays on by default so existing runs are unchanged.
+    assert config.write_subject_metadata is True
 
 
 def test_all_settings_overridable():
@@ -30,6 +32,7 @@ def test_all_settings_overridable():
             "COMPRESSION_LEVEL": "9",
             "STRIP_REF_SUFFIX": "true",
             "WRITE_COMMENTS": "false",
+            "WRITE_SUBJECT_METADATA": "false",
         }
     )
     assert config.input_dir == Path("/in")
@@ -40,6 +43,7 @@ def test_all_settings_overridable():
     assert config.compression_level == 9
     assert config.strip_ref_suffix is True
     assert config.write_comments is False
+    assert config.write_subject_metadata is False
 
 
 @pytest.mark.parametrize(
@@ -67,6 +71,32 @@ def test_boolean_parsing(value, expected):
 
 def test_empty_output_filename_treated_as_unset():
     assert Config.from_env({"OUTPUT_FILENAME": ""}).output_filename is None
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "/etc/evil.nwb",
+        "../../../../tmp/evil.nwb",
+        "sub/dir/x.nwb",
+        "sub\\dir\\x.nwb",
+        "..",
+        ".",
+    ],
+)
+def test_output_filename_outside_output_dir_raises(value):
+    # `output_dir / name` drops the directory for an absolute name and `..`
+    # walks out of it, and these arrive as platform workflow parameters.
+    with pytest.raises(ValueError, match="must be a bare filename"):
+        Config.from_env({"OUTPUT_FILENAME": value})
+
+
+@pytest.mark.parametrize("value", ["flase", "maybe", "2", "y"])
+def test_unrecognised_boolean_raises(value):
+    # Silently reading these as false meant WRITE_COMMENTS=flase dropped every
+    # annotation, while a mistyped numeric setting has always raised.
+    with pytest.raises(ValueError, match="must be one of"):
+        Config.from_env({"WRITE_COMMENTS": value})
 
 
 def test_unknown_timezone_raises():

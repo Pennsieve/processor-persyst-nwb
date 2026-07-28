@@ -5,6 +5,11 @@ services:
       dockerfile: Dockerfile
     env_file:
       - dev.env
+    # The image runs as an unprivileged user. Use the UID of the user who starts
+    # the container, so that the bind-mounted output directory stays writable and
+    # you own the files in it. `make run` gives HOST_UID and HOST_GID. If they are
+    # not set, the container uses the UID of the image.
+    user: "${HOST_UID:-10001}:${HOST_GID:-10001}"
     volumes:
       - ./data/input:/data/input:ro
       - ./data/output:/data/output

@@ -49,6 +49,14 @@ largest seen is ~1.9e5) and far below any real recording date. A year-2000
 recording is 9.5e8, so a 1e9 floor would wrongly reject it. The ceiling is 2096.
 """
 
+_PLAUSIBLE_FILETIME_YEARS: tuple[int, int] = (1990, 2100)
+"""Years in which a NeuroPace FILETIME is credible.
+
+A FILETIME of 0, or a negative value, converts to 1601 and raises nothing. Such
+a value then takes precedence over a usable ``TestDate``/``TestTime``. No RNS
+recording is older than the device.
+"""
+
 _MIN_SNAP_TOLERANCE_S = 0.002
 """Floor on the millisecond-snapping tolerance, at ~4x the quantisation error."""
 
@@ -130,11 +138,11 @@ def resolve_session_start(layout: Layout, tz: ZoneInfo) -> tuple[datetime, str]:
     """
     for key in ("ecogtimestampasutc", "layoutfiletimestampasutc"):
         raw = layout.np_file_info.get(key)
-        if raw:
-            try:
-                return filetime_to_datetime(int(raw)), f"[NP_FileInfo] {key}"
-            except ValueError:
-                logger.warning("unreadable FILETIME in %s: %r", key, raw)
+        if not raw:
+            continue
+        stamp = _filetime_or_none(raw, key)
+        if stamp is not None:
+            return stamp, f"[NP_FileInfo] {key}"
 
     from_patient = parse_test_datetime(
         layout.patient.get("testdate"), layout.patient.get("testtime"), tz
@@ -173,12 +181,21 @@ def segment_spans(
     the ``2 / rate`` gap threshold. Without snapping, a contiguous 2048 Hz
     recording reports false gaps and can emit non-monotonic timestamps.
 
+    Stored times can be in order and still describe an overlap. At 250 Hz, 250
+    samples fill one second, so an entry 0.5 s later covers samples that the
+    previous segment also covers. An overlap gives timestamps that decrease, in
+    the same way that times out of order do. This function therefore moves such a
+    boundary forward to the end of the previous segment, and logs it.
+
+    The returned spans always tile ``[0, n_samples)`` in order, and their offsets
+    never decrease. See ``_check_spans``.
+
     Raise ValueError if ``n_samples`` is not positive.
     """
     if n_samples <= 0:
         raise ValueError(f"recording has no samples: {n_samples!r}")
 
-    usable = _usable_segments(segments, n_samples)
+    usable = _usable_segments(segments, n_samples, rate)
     if len(usable) < MIN_SEGMENTS_FOR_SPANS:
         return (SegmentSpan(0, n_samples, 0.0),)
 
@@ -196,8 +213,9 @@ def segment_spans(
     tolerance = max(1.5 / rate, _MIN_SNAP_TOLERANCE_S)
     base_sample, base_time = starts[0], usable[0].start_time_s
 
-    spans = []
+    spans: list[SegmentSpan] = []
     snapped = 0
+    overlapped = 0
     for seg, start, stop in zip(usable, starts, stops, strict=True):
         expected = (start - base_sample) / rate
         observed = seg.start_time_s - base_time
@@ -206,6 +224,15 @@ def segment_spans(
             snapped += observed != expected
         else:
             offset = observed
+
+        if spans:
+            earliest = spans[-1].offset_s + spans[-1].n_samples / rate
+            if offset < earliest:
+                # Always move the boundary, to keep the invariant exact. Report
+                # only an overlap that is larger than half a sample period: a sum
+                # of float64 offsets can fall one ULP short of `expected`.
+                overlapped += earliest - offset > 0.5 / rate
+                offset = earliest
         spans.append(SegmentSpan(start, stop, offset))
 
     if snapped:
@@ -213,7 +240,16 @@ def segment_spans(
             "snapped %d millisecond-quantised segment boundary/ies to exact times",
             snapped,
         )
-    return tuple(spans)
+    if overlapped:
+        logger.warning(
+            "%d [SampleTimes] entry/ies overlap the preceding segment; "
+            "clamping them to where the previous segment ends",
+            overlapped,
+        )
+
+    result = tuple(spans)
+    _check_spans(result, n_samples, rate)
+    return result
 
 
 def has_gaps(spans: tuple[SegmentSpan, ...], rate: float) -> bool:
@@ -230,22 +266,71 @@ def has_gaps(spans: tuple[SegmentSpan, ...], rate: float) -> bool:
     return False
 
 
+def timestamps_window(
+    spans: tuple[SegmentSpan, ...], rate: float, start: int, stop: int
+) -> npt.NDArray[np.float64]:
+    """Timestamps for samples ``[start, stop)``, in seconds from session start.
+
+    A window, rather than the whole recording, lets the writer stream the
+    timestamps as it streams the samples. One float64 timestamp uses 8 bytes per
+    sample. For a 4-channel int16 recording, the full array is as large as the
+    ``.dat`` file, which cancels the benefit of the memory-mapped read.
+
+    Offsets stay small because they are relative. The float64 spacing is
+    therefore much finer than the gap threshold, even for a recording of several
+    weeks.
+    """
+    parts = []
+    for span in spans:
+        lo = max(span.start_sample, start)
+        hi = min(span.stop_sample, stop)
+        if hi <= lo:
+            continue
+        offsets = np.arange(lo - span.start_sample, hi - span.start_sample)
+        parts.append(span.offset_s + offsets / rate)
+
+    if not parts:
+        return np.empty(0, dtype=np.float64)
+    return np.concatenate(parts)
+
+
 def timestamps_seconds(
     spans: tuple[SegmentSpan, ...], rate: float
 ) -> npt.NDArray[np.float64]:
     """Build one timestamp per sample, in seconds from the session start.
 
-    Offsets stay small because they are relative, so float64 spacing is orders of
-    magnitude finer than the gap threshold even across a multi-week recording.
+    This function builds the array for the whole recording. The writer uses
+    ``timestamps_window`` instead. Use this function only if you need the
+    complete array.
     """
-    parts = [
-        span.offset_s + np.arange(span.n_samples, dtype=np.float64) / rate
-        for span in spans
-        if span.n_samples > 0
-    ]
-    if not parts:
+    if not spans:
         return np.empty(0, dtype=np.float64)
-    return np.concatenate(parts)
+    return timestamps_window(spans, rate, 0, spans[-1].stop_sample)
+
+
+def _filetime_or_none(raw: str, key: str) -> datetime | None:
+    """Convert a FILETIME string, or None if it is unreadable or not credible.
+
+    The conversion succeeds for any integer in range. A value of 0 gives
+    1601-01-01 and raises nothing. This function therefore also checks the year,
+    because such a value takes precedence over the later start-time sources.
+    """
+    try:
+        stamp = filetime_to_datetime(int(raw))
+    except (ValueError, OverflowError, OSError):
+        logger.warning("unreadable FILETIME in %s: %r", key, raw)
+        return None
+
+    low, high = _PLAUSIBLE_FILETIME_YEARS
+    if not low <= stamp.year <= high:
+        logger.warning(
+            "implausible FILETIME in %s: %r resolves to %s; ignoring it",
+            key,
+            raw,
+            stamp.isoformat(),
+        )
+        return None
+    return stamp
 
 
 def _try_formats(value: str, formats: tuple[str, ...]) -> datetime | None:
@@ -258,13 +343,52 @@ def _try_formats(value: str, formats: tuple[str, ...]) -> datetime | None:
     return None
 
 
+def _check_spans(
+    spans: tuple[SegmentSpan, ...], n_samples: int, rate: float
+) -> None:
+    """Check that spans tile ``[0, n_samples)`` and never move backwards.
+
+    NWB requires timestamps that increase. The per-sample timestamps increase only
+    if each span starts at or after the end of the previous span. This check costs
+    one pass over the segments, and a segment count is always small. A check of
+    the timestamps themselves would cost one pass over every sample.
+
+    Raise ValueError if a span breaks either rule. A file that breaks them is one
+    that no reader can use.
+    """
+    if spans[0].start_sample != 0 or spans[-1].stop_sample != n_samples:
+        raise ValueError(
+            f"segment spans do not tile [0, {n_samples}): "
+            f"{spans[0].start_sample}..{spans[-1].stop_sample}"
+        )
+    for previous, current in zip(spans, spans[1:], strict=False):
+        if current.start_sample != previous.stop_sample:
+            raise ValueError(
+                f"segment spans leave a hole at sample "
+                f"{previous.stop_sample}..{current.start_sample}"
+            )
+        earliest = previous.offset_s + previous.n_samples / rate
+        if current.offset_s < earliest:
+            raise ValueError(
+                f"segment starting at sample {current.start_sample} begins at "
+                f"{current.offset_s} s, before the previous segment ends at "
+                f"{earliest} s"
+            )
+
+
 def _usable_segments(
-    segments: tuple[Segment, ...], n_samples: int
+    segments: tuple[Segment, ...], n_samples: int, rate: float
 ) -> list[Segment]:
     """Sort, deduplicate, and drop entries that fall outside the data.
 
     Persyst may leave stale ``[SampleTimes]`` entries describing a longer original
     recording than the ``.dat`` actually holds.
+
+    If the first entry that remains is not sample 0, this function adds a span for
+    the samples before it. It calculates the time of that span backward from the
+    entry at ``rate``, which assumes that those samples are contiguous with the
+    entry. The entry's own time must not be used: two spans then have the same
+    offset, and the timestamps decrease.
     """
     seen: set[int] = set()
     usable = []
@@ -287,9 +411,13 @@ def _usable_segments(
 
     if usable and usable[0].start_sample != 0:
         logger.warning(
-            "[SampleTimes] starts at sample %d, not 0; prepending a span",
+            "[SampleTimes] starts at sample %d, not 0; prepending a span "
+            "extrapolated back to sample 0",
             usable[0].start_sample,
         )
-        usable.insert(0, Segment(0, usable[0].start_time_s))
+        usable.insert(
+            0,
+            Segment(0, usable[0].start_time_s - usable[0].start_sample / rate),
+        )
 
     return usable
