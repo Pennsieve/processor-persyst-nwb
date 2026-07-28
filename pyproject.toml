@@ -1,0 +1,99 @@
+[project]
+name = "processor-persyst-nwb"
+version = "1.0.0"
+description = "Python process for converting Persyst (.lay/.dat) recordings to NWB"
+requires-python = ">=3.12"
+dependencies = [
+    "numpy",
+    "pynwb",
+    "hdmf",
+    "tzdata",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "mne>=1.7.0",
+]
+dev = [
+    "mypy>=1.8.0",
+    "ruff",
+    "pre-commit",
+]
+
+[tool.coverage.run]
+source = ["processor"]
+omit = [
+    "processor/__init__.py",
+    "processor/main.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 80
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "B",    # flake8-bugbear
+    "C4",   # flake8-comprehensions
+    "UP",   # pyupgrade (modern syntax)
+    "ANN",  # flake8-annotations (require type annotations)
+    "RET",  # flake8-return
+    "SIM",  # flake8-simplify
+    "PTH",  # flake8-use-pathlib
+    "TID",  # flake8-tidy-imports
+    "N",    # pep8-naming
+    "PL",   # pylint
+    "D",    # pydocstyle (PEP 257 docstring conventions)
+]
+ignore = [
+    "E501",     # line too long (handled by formatter)
+    "B008",     # do not perform function calls in argument defaults
+    "PLR0913",  # too many arguments (writer functions legitimately take several)
+]
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+[tool.ruff.lint.pylint]
+max-args = 10
+
+[tool.ruff.lint.pydocstyle]
+convention = "pep257"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B", "C4", "ANN", "D", "PLR2004"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+show_error_codes = true
+files = ["processor"]
+
+# Third-party libraries without complete type information.
+[[tool.mypy.overrides]]
+module = [
+    "pynwb.*",
+    "hdmf.*",
+    "h5py.*",
+    "mne.*",
+]
+ignore_missing_imports = true
