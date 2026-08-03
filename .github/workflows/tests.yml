@@ -103,21 +103,16 @@ jobs:
           docker run --rm --user 4242:4242 processor-persyst-nwb:ci \
             python3.12 -c 'import processor.main; print("import OK")'
 
+      # The generator is stdlib-only on purpose. This job builds the image and
+      # never installs the project dependencies, so the runner has no numpy.
       - name: Convert a synthetic recording end to end
         run: |
-          mkdir -p ci-data/input ci-data/output
-          python -c "
-          import numpy as np
-          n, rate = 800, 200.0
-          data = np.column_stack([
-              np.arange(n), np.arange(n) + 1000
-          ]).astype('<i2')
-          open('ci-data/input/rec.dat','wb').write(data.tobytes())
-          open('ci-data/input/rec.lay','w').write(
-              '[FileInfo]\nFile=rec.dat\nFileType=Interleaved\n'
-              f'SamplingRate={rate:g}\nHeaderLength=0\nCalibration=1\n'
-              'WaveformCount=2\nDataType=0\n[ChannelMap]\nA=1\nB=2\n')
-          "
+          mkdir -p ci-data/output
+          # The runner creates this directory as its own UID with mode 0755, and
+          # the container writes to it as a UID the host has never heard of.
+          # Without this the bind mount rejects the write.
+          chmod 0777 ci-data/output
+          python3 tests/make_smoke_fixture.py ci-data/input
           docker run --rm --user 4242:4242 \
             -e INPUT_DIR=/data/input -e OUTPUT_DIR=/data/output \
             -v "$PWD/ci-data/input":/data/input:ro \
