@@ -82,8 +82,8 @@ def test_empty_channelmap_raises(lay_text):
 def test_channel_names_ordered_by_index_not_file_order(caplog):
     """The [ChannelMap] value is the interleave position, so it must be honored.
 
-    Returning labels in file order while merely *validating* the indices puts
-    every label on the wrong data column -- a silent channel swap.
+    Returning labels in file order while only validating the indices puts every
+    label on the wrong data column, a channel swap with no error.
     """
     text = (
         "[FileInfo]\nFile=a.dat\nSamplingRate=250\nCalibration=1\nDataType=0\n"
@@ -172,8 +172,8 @@ def test_comment_text_keeps_commas_and_colons(lay_text):
 
 
 def test_comment_with_embedded_equals_and_xml_survives(lay_text):
-    # Comment text contains '=' inside XML attributes, so an '='-sniffing
-    # parser would shred it.
+    # Comment text contains '=' inside XML attributes, so a parser that splits
+    # on '=' would corrupt it.
     text = lay_text(comments=[(0.0, 0.0, _XML_COMMENT)])
     comment = parse_layout(text).comments[0]
     assert comment.text == _XML_COMMENT

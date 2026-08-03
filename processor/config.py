@@ -1,10 +1,11 @@
 """Runtime configuration drawn from the environment.
 
-Every setting is an environment variable so a containerised run can be retuned
-without a rebuild. (On Pennsieve specifically, a workflow's ``params`` arrive as
-upper-cased environment variables, which is what makes these settable per
-workflow.) Construction takes an explicit mapping rather than reading
-``os.environ``, which keeps it pure and testable.
+Every setting is an environment variable, so a containerized run can be retuned
+without a rebuild. On Pennsieve a workflow's ``params`` arrive as upper-cased
+environment variables, which makes each setting a workflow parameter as well.
+
+Construction takes an explicit mapping instead of reading ``os.environ``, which
+keeps this module free of I/O and testable.
 """
 
 import logging
@@ -27,9 +28,9 @@ _TRUTHY: frozenset[str] = frozenset({"true", "1", "yes", "on"})
 _FALSY: frozenset[str] = frozenset({"false", "0", "no", "off"})
 """Environment spellings accepted as boolean false.
 
-This set is explicit so that ``_boolean`` can reject any other value. If an
-unknown value gave false, then ``WRITE_COMMENTS=flase`` discarded every
-annotation and gave no error. A mistyped numeric setting always raises.
+The set is explicit so ``_boolean`` can reject anything outside it. If an unknown
+value read as false, ``WRITE_COMMENTS=flase`` would discard every annotation and
+report nothing, while a mistyped numeric setting has always raised.
 """
 
 
@@ -51,9 +52,9 @@ class Config:
     def from_env(cls, env: Mapping[str, str]) -> "Config":
         """Build a Config from environment variables, applying defaults.
 
-        Raise ValueError, and do not use a default, if ``PERSYST_TIMEZONE`` names
-        an unknown zone, if a numeric or boolean setting is unreadable, or if
-        ``OUTPUT_FILENAME`` is not a bare filename.
+        An unknown ``PERSYST_TIMEZONE``, an unreadable numeric or boolean
+        setting, or an ``OUTPUT_FILENAME`` that is not a bare filename raises
+        ValueError instead of falling back to the default.
         """
         return cls(
             input_dir=Path(env.get("INPUT_DIR", "/data/input")),
@@ -90,10 +91,10 @@ def _filename(raw: str | None) -> str | None:
     """Validate ``OUTPUT_FILENAME`` as a bare filename, or None if it is unset.
 
     ``output_dir / name`` discards the directory if ``name`` is absolute, and
-    ``..`` moves out of the directory. An unchecked value can therefore write to
-    any path that the process can reach. On Pennsieve these values arrive as
-    workflow parameters, and an operator does not always type them. A second
-    command-line argument has no such restriction.
+    ``..`` walks out of it, so an unchecked value can write to any path the
+    process can reach. On Pennsieve this value arrives as a workflow parameter
+    rather than from a shell, so nothing else vets it. A second command-line
+    argument carries no such restriction.
     """
     name = (raw or "").strip()
     if not name:

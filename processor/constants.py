@@ -12,7 +12,10 @@ DATATYPE_TO_DTYPE: Final[Mapping[int, SampleDtype]] = {
     0: np.dtype("<i2"),
     7: np.dtype("<i4"),
 }
-"""Persyst ``[FileInfo] DataType`` to sample dtype; Persyst is a Windows format."""
+"""Persyst ``[FileInfo] DataType`` to sample dtype.
+
+The format is Windows-native, so the stored integers are little-endian.
+"""
 
 MICROVOLTS_PER_VOLT: Final = 1e6
 """Divisor turning the Persyst calibration (counts per uV) into volts per count."""
@@ -27,8 +30,7 @@ GAP_THRESHOLD_PERIODS: Final = 2
 """Sample periods a timestamp jump must exceed to count as a discontinuity.
 
 Two periods is the conventional tolerance for electrophysiology timeseries: it
-admits one period of ordinary jitter while still catching a genuinely dropped
-sample.
+allows one period of ordinary jitter and still catches a dropped sample.
 """
 
 TARGET_CHUNK_BYTES: Final = 4 * 2**20
@@ -37,9 +39,9 @@ TARGET_CHUNK_BYTES: Final = 4 * 2**20
 MAX_CHUNK_SAMPLES: Final = 2**17
 """Cap on samples per chunk, whatever the byte budget allows.
 
-Bounds how much a reader must decompress to reach a single sample when a
-recording has few channels, where the byte budget alone would permit a chunk
-spanning millions of samples.
+Bounds how much a reader must decompress to reach one sample. On a recording
+with few channels, the byte budget alone would allow a chunk that spans millions
+of samples.
 """
 
 DEFAULT_COMPRESSION_LEVEL: Final = 4

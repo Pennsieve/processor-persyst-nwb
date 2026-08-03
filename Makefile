@@ -45,10 +45,10 @@ install:
 	$(VENV_DIR)/bin/pip install --upgrade pip
 	$(VENV_DIR)/bin/pip install --require-hashes -r requirements-test.lock
 
-# This target resolves the versions in the base image of the container, so that
-# the pins match production and not the local machine. It compiles
-# requirements-test.txt together with the runtime file, so that the two lock
-# files agree on each shared transitive version.
+# This target resolves the versions in the base image of the container, so the
+# pins match production rather than the local machine. It compiles
+# requirements-test.txt together with the runtime file, so the two lock files
+# agree on each shared transitive version.
 lock:
 	docker run --rm --platform $(LOCK_PLATFORM) \
 		-v "$(CURDIR)":/w -w /w $(BASE_IMAGE) sh -c '\

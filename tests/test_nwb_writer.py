@@ -2,8 +2,9 @@
 
 These cover the properties an NWB reader relies on: data shaped
 ``(samples, channels)``, an electrodes table aligned with the data columns, either
-a rate or per-sample timestamps, labels on a ``channel_name`` column, a tz-aware
-session start, and a ``conversion`` that recovers the recorded microvolts.
+a rate or per-sample timestamps, labels on a ``channel_name`` column, a session
+start with a time zone, and a ``conversion`` that recovers the recorded
+microvolts.
 """
 
 from zoneinfo import ZoneInfo
@@ -452,7 +453,7 @@ def test_failed_write_leaves_no_file_behind(
 
 
 def test_out_of_range_count_accounts_for_gaps(tmp_path, persyst_pair, caplog):
-    """An annotation in a gap is inside the recording, and not outside it.
+    """An annotation in a gap is inside the recording, not outside it.
 
     At 250 Hz, 500 samples give 2 s of data. With the gap, the recording spans
     501 s. The annotation at 300 s is therefore in range.

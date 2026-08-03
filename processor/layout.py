@@ -1,11 +1,14 @@
 """Parsing of the Persyst ``.lay`` header into plain values.
 
-A ``.lay`` file looks like an INI file but is not one. ``configparser`` cannot
-read it: it lower-cases option keys (destroying channel labels such as
-``Fp1-Ref``), raises on the duplicate ``Annotations=`` keys that NeuroPace files
-carry, treats ``:`` as a key/value delimiter (shredding free-text comments), and
-chokes entirely on the comma-separated ``[Comments]`` body. So the scanner here
-is hand-rolled and section-aware.
+A ``.lay`` file looks like an INI file but is not one, and ``configparser``
+cannot read it:
+
+- It lower-cases option keys, which destroys channel labels such as ``Fp1-Ref``.
+- It raises on the duplicate ``Annotations=`` keys that NeuroPace files carry.
+- It treats ``:`` as a key/value delimiter, which splits free-text comments.
+- It cannot read the comma-separated ``[Comments]`` body at all.
+
+This module scans the text itself, one section at a time.
 
 Nothing in this module touches the ``.dat`` file, so every header variant is
 testable from a string.
@@ -95,8 +98,8 @@ class Layout:
         """Number of interleaved channels in the ``.dat`` file.
 
         Taken from ``[ChannelMap]`` rather than ``WaveformCount``, which real
-        files get wrong: ``wave_sin.lay`` declares 4 waveforms for a genuinely
-        2-channel recording.
+        files get wrong: ``wave_sin.lay`` declares 4 waveforms for a 2-channel
+        recording.
         """
         return len(self.channel_names)
 
@@ -104,9 +107,9 @@ class Layout:
 def read_layout(path: Path) -> Layout:
     """Parse the ``.lay`` file at the given path.
 
-    Decodes with ``errors="replace"`` because patient fields written by the
-    Windows application may hold cp1252 bytes, and relies on universal newlines
-    since real files mix CRLF and LF.
+    Decoding uses ``errors="replace"`` because patient fields written by the
+    Windows application may hold cp1252 bytes. Universal newlines cover the mix
+    of CRLF and LF that real files contain.
     """
     return parse_layout(path.read_text(encoding="utf-8", errors="replace"))
 
@@ -216,8 +219,8 @@ def _resolve_dtype(datatype: str | None, file_type: str) -> SampleDtype:
 
     Fall back to ``FileType`` when ``DataType`` is absent, since
     ``32BitInterleaved`` says the same thing. Raise ValueError on a value that is
-    present but unrecognised rather than guessing: the legacy processor treated
-    everything except 7 as int16, which silently mis-decodes anything new.
+    present but unrecognized rather than guessing: the legacy processor treated
+    everything except 7 as int16, which mis-decodes anything new without a word.
     """
     if datatype is None or datatype == "":
         inferred = (
@@ -249,10 +252,10 @@ def _build_channel_names(
     """Extract channel labels from ``[ChannelMap]``, ordered by index.
 
     The value of each entry is the 1-based position of the label in the
-    interleaved ``.dat``. That value, and not the order of the lines, gives the
-    data column for each label. Most files list the entries in index order. If
-    this function used the line order, it could attach each label to the wrong
-    column and give no error.
+    interleaved ``.dat``, and that position, not the order of the lines, gives
+    the data column for each label. Most files do list the entries in index
+    order, but for the files that do not, line order attaches each label to the
+    wrong column and reports nothing.
 
     Labels keep their original case and inner spacing (``Fp1-Ref``,
     ``Lhip1 - Lhip2``, ``Sin 20Hz``). Raise ValueError when the section is empty

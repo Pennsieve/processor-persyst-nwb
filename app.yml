@@ -1,7 +1,7 @@
 # yaml-language-server: $schema=https://app.pennsieve.io/static/schemas/app-manifest.v1.json
 schemaVersion: '1.0'
 name: Processor Persyst NWB
-description: Convert a Persyst recording (.lay + .dat) into a NWB file
+description: Convert a Persyst recording (.lay + .dat) into an NWB file
 applicationType: processor
 runtime:
   computeTypes:
@@ -12,7 +12,7 @@ resources:
 parameters:
   - name: OUTPUT_FILENAME
     type: string
-    description: Bare filename (no path) for the NWB output file; defaults to a derived name if unset
+    description: Bare filename (no path) for the NWB output file. Defaults to the stem of the .lay file when unset
     default: ''
   - name: PERSYST_TIMEZONE
     type: string
@@ -25,7 +25,7 @@ parameters:
     min: 1
   - name: COMPRESSION_LEVEL
     type: number
-    description: Target compression level for NWB output file
+    description: gzip level for the sample and timestamp datasets; 0 disables compression
     default: 4
     min: 0
     max: 9
@@ -35,9 +35,9 @@ parameters:
     default: false
   - name: WRITE_COMMENTS
     type: boolean
-    description: Whether to include Persyst [Comments] annotations as a NWB TimeIntervals table
+    description: Whether to include Persyst [Comments] annotations as an NWB TimeIntervals table
     default: true
   - name: WRITE_SUBJECT_METADATA
     type: boolean
-    description: Whether or not to include PII in the NWB output file
+    description: Whether to include the [Patient] subject block, which holds PII, in the NWB output file
     default: false

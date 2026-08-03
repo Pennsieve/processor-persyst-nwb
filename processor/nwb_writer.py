@@ -1,11 +1,14 @@
 """Assembly of the NWB file.
 
 The output follows the conventional shape for extracellular electrophysiology, so
-any NWB reader can consume it: one ``ElectricalSeries`` in ``acquisition`` with
-data shaped ``(samples, channels)``, an electrodes table with one row per channel
-and a region covering all of them, a ``channel_name`` column carrying the
-recording's own labels, a timezone-aware session start, and discontinuities
-expressed as jumps in ``timestamps`` rather than a constant rate.
+any NWB reader can consume it:
+
+- One ``ElectricalSeries`` in ``acquisition``, with data shaped
+  ``(samples, channels)``.
+- An electrodes table with one row per channel, and a region covering all of them.
+- A ``channel_name`` column carrying the recording's own labels.
+- A session start that has a time zone.
+- Discontinuities expressed as jumps in ``timestamps`` rather than a constant rate.
 """
 
 import logging
@@ -85,8 +88,8 @@ class _TimestampIterator(GenericDataChunkIterator):  # type: ignore[misc]
     """Streams per-sample timestamps, so the full array stays out of memory.
 
     One float64 timestamp uses 8 bytes per sample. For a 4-channel int16
-    recording, the full array is as large as the ``.dat`` file. Such an array
-    cancels the benefit that ``_RawDataIterator`` gives.
+    recording, the full array is as large as the ``.dat`` file, which would
+    cancel the benefit that ``_RawDataIterator`` gives.
     """
 
     def __init__(self, reader: PersystReader, samples_per_chunk: int) -> None:
@@ -125,8 +128,8 @@ def write_nwb(
     reproducible. Return the path written.
 
     ``output_path`` holds a complete file, or no file. HDF5 empties the target
-    file when it opens it. A write to the target itself therefore leaves a corrupt
-    ``.nwb`` file if the conversion fails before the end.
+    file when it opens it, so a write straight to the target leaves a corrupt
+    ``.nwb`` file when the conversion fails before the end.
     """
     samples_per_chunk = _resolve_chunk(reader, target_chunk_bytes)
     nwb = _build_nwb_file(reader, identifier, write_subject_metadata)
@@ -152,12 +155,11 @@ def write_nwb(
 def _write_atomically(nwb: NWBFile, output_path: Path) -> None:
     """Write ``nwb`` so that ``output_path`` holds only a complete file.
 
-    The temporary file is in the same directory as the target, which keeps the
-    rename atomic. Its name does not end in ``.nwb``. If the process stops
-    without warning, the file that remains is therefore one that no reader, and
-    no later stage of the pipeline, accepts as output. pynwb recommends the
-    ``.nwb`` suffix, so this function hides that one warning for the temporary
-    name.
+    The temporary file sits in the same directory as the target, which keeps the
+    rename atomic, and its name does not end in ``.nwb``. If the process dies
+    mid-write, what remains is a file that neither a reader nor a later pipeline
+    stage accepts as output. pynwb recommends the ``.nwb`` suffix, so this
+    function suppresses that one warning for the temporary name.
     """
     partial = output_path.with_name(output_path.name + ".partial")
     try:
@@ -243,10 +245,10 @@ def _build_subject(reader: PersystReader) -> Subject | None:
         reader.session_start_time.tzinfo,  # type: ignore[arg-type]
     )
     if birth is not None and birth >= reader.session_start_time:
-        # Persyst writes a two-digit year, and strptime reads 68 or less as 20xx.
-        # A patient born before 1969 therefore gets a date 100 years late:
-        # 01/02/40 gives 2040. A date of birth at or after the recording is not
-        # possible, so this test finds such a date without a fixed cutoff year.
+        # Persyst writes a two-digit year and strptime reads 68 or less as 20xx,
+        # so a patient born before 1969 gets a date 100 years late: 01/02/40
+        # gives 2040. A date of birth at or after the recording is not possible,
+        # so this check catches those dates without a fixed cutoff year.
         logger.warning(
             "[Patient] BirthDate %r reads as %s, not before the recording "
             "start %s; omitting date_of_birth",
@@ -362,9 +364,9 @@ def _add_comments(nwb: NWBFile, reader: PersystReader) -> None:
 
     Skipped entirely when there are no comments: a table carrying a custom column
     and zero rows cannot resolve that column's dtype and fails at write time.
-    Onsets outside the recording are kept rather than dropped -- they are real
-    provenance, and Persyst headers legitimately describe events before the first
-    sample or beyond a clipped ``.dat`` -- but they are counted in the log.
+    Onsets outside the recording are kept rather than dropped, because Persyst
+    headers legitimately describe events before the first sample or beyond a
+    clipped ``.dat``. The log counts them.
     """
     comments = reader.comments
     if not comments:
@@ -405,8 +407,8 @@ def _add_comments(nwb: NWBFile, reader: PersystReader) -> None:
 def _count_outside(comments: tuple[Comment, ...], end_s: float) -> int:
     """Count annotations that start before 0 or after the last sample.
 
-    ``end_s`` must include the gaps. A segmented recording spans much more time
-    than its sample count gives. A count against the samples alone therefore
-    reports annotations as outside the recording when they are inside it.
+    ``end_s`` must include the gaps, because a segmented recording spans much more
+    time than its sample count gives. Counting against the samples alone reports
+    annotations as outside the recording when they are inside it.
     """
     return sum(1 for c in comments if c.onset_s < 0.0 or c.onset_s > end_s)

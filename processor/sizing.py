@@ -11,17 +11,15 @@ def chunk_samples(
 ) -> int:
     """Choose how many samples one chunk should span.
 
-    Sized by bytes rather than by a fixed sample count, so a 4-channel int16 file
-    and a 256-channel int16 file both land near ``target_bytes`` instead of
-    differing 64-fold.
+    Sizing by bytes rather than by a fixed sample count keeps a 4-channel int16
+    file and a 256-channel int16 file both near ``target_bytes``, instead of 64
+    times apart.
 
-    The result never exceeds ``n_samples``, because ``GenericDataChunkIterator``
-    asserts each chunk axis fits within the dataset and a short recording would
-    otherwise fail outright.
-
-    The result never exceeds ``MAX_CHUNK_SAMPLES``, which bounds how much a
-    reader must decompress to reach one sample when a recording is narrow enough
-    that the byte budget alone would allow a chunk spanning millions of samples.
+    Two ceilings apply. ``n_samples`` is one: ``GenericDataChunkIterator``
+    asserts that each chunk axis fits within the dataset, so a chunk longer than
+    a short recording fails outright. ``MAX_CHUNK_SAMPLES`` is the other. It
+    bounds how much a reader must decompress to reach one sample, which the byte
+    budget alone does not do on a narrow recording.
 
     Raise ValueError if any argument is not positive.
     """

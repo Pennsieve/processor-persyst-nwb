@@ -86,15 +86,15 @@ def test_empty_output_filename_treated_as_unset():
 )
 def test_output_filename_outside_output_dir_raises(value):
     # `output_dir / name` drops the directory for an absolute name and `..`
-    # walks out of it, and these arrive as platform workflow parameters.
+    # walks out of it. These values arrive as platform workflow parameters.
     with pytest.raises(ValueError, match="must be a bare filename"):
         Config.from_env({"OUTPUT_FILENAME": value})
 
 
 @pytest.mark.parametrize("value", ["flase", "maybe", "2", "y"])
 def test_unrecognised_boolean_raises(value):
-    # Silently reading these as false meant WRITE_COMMENTS=flase dropped every
-    # annotation, while a mistyped numeric setting has always raised.
+    # Reading these as false would drop every annotation on WRITE_COMMENTS=flase,
+    # while a mistyped numeric setting has always raised.
     with pytest.raises(ValueError, match="must be one of"):
         Config.from_env({"WRITE_COMMENTS": value})
 

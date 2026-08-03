@@ -1,10 +1,8 @@
 """Command-line shell around the conversion.
 
-Accepts an explicit path for the `.lay` Persyst input file
-and an explicit path for the `.nwb` output file.
-
-When no paths are provided, discovers a single `.lay` file in `INPUT_DIR`
-and writes the result to `OUTPUT_DIR`.
+Takes an explicit path to the Persyst `.lay` input and an explicit path for the
+`.nwb` output. Given no paths, it finds the single `.lay` file in `INPUT_DIR` and
+writes the result to `OUTPUT_DIR`.
 """
 
 import logging
@@ -20,15 +18,15 @@ from processor.reader import PersystReader
 logger = logging.getLogger(__name__)
 
 _LAY_SUFFIX = ".lay"
-"""Persyst's master extension; the .dat it names sits alongside it."""
+"""Extension of the Persyst header; the ``.dat`` it names sits alongside it."""
 
 
 def find_layout_file(input_dir: Path) -> Path:
     """Find the single ``.lay`` file in ``input_dir``.
 
-    Matching ignores case because Persyst recordings arrive from Windows. Raise
-    FileNotFoundError when there is none and ValueError when there are several,
-    since a Persyst package should contain exactly one header.
+    Matching ignores case because Persyst recordings arrive from Windows. A
+    Persyst package holds exactly one header, so raise FileNotFoundError when
+    there is none and ValueError when there are several.
     """
     if not input_dir.is_dir():
         raise FileNotFoundError(f"input directory does not exist: {input_dir}")
@@ -68,9 +66,9 @@ def convert(lay_path: Path, output_path: Path, config: Config) -> Path:
 
 
 def main(argv: Sequence[str], env: Mapping[str, str]) -> int:
-    """Run the conversion, returning a shell exit code.
+    """Run the conversion and return a shell exit code.
 
-    Returns exit code 0 on success and 1 for any failure.
+    The code is 0 on success and 1 on any failure.
     """
     try:
         config = Config.from_env(env)
@@ -90,8 +88,8 @@ def main(argv: Sequence[str], env: Mapping[str, str]) -> int:
 def _output_path(argv: Sequence[str], config: Config, lay_path: Path) -> Path:
     """Decide where the NWB file goes.
 
-    A second positional argument wins, then ``OUTPUT_FILENAME``, then the header's
-    own stem -- which keeps the recording identifiable after conversion.
+    A second positional argument wins, then ``OUTPUT_FILENAME``, then the
+    header's own stem, which keeps the recording identifiable after conversion.
     """
     if len(argv) > 1:
         return Path(argv[1])

@@ -5,7 +5,7 @@ on:
     branches: [main]
   pull_request:
 
-# No job in this workflow writes to the repository, or publishes an artifact.
+# No job in this workflow writes to the repository or publishes an artifact.
 permissions:
   contents: read
 
@@ -18,7 +18,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      # Actions are pinned to commit SHAs, and not to tags. A tag can move.
+      # Actions are pinned to commit SHAs rather than tags, because a tag moves.
       - name: Checkout code
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -29,7 +29,7 @@ jobs:
           cache: 'pip'
           cache-dependency-path: requirements-test.lock
 
-      # --require-hashes, so that CI tests the versions in the image.
+      # --require-hashes, so CI tests the versions that the image contains.
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
@@ -95,9 +95,9 @@ jobs:
         run: docker build -t processor-persyst-nwb:ci .
 
       # The `import pynwb` statement writes a schema cache before the converter
-      # starts. The image must therefore work with any UID that the platform
-      # selects, and not only with root or with appuser. An arbitrary UID is the
-      # condition that failed before.
+      # starts, so the image has to work with any UID the platform selects, not
+      # only root or appuser. An arbitrary UID is the condition that failed
+      # before.
       - name: Entrypoint imports under an arbitrary UID
         run: |
           docker run --rm --user 4242:4242 processor-persyst-nwb:ci \

@@ -1,9 +1,9 @@
 """Reading Persyst sample data out of the ``.dat`` binary.
 
-The ``.dat`` file is headerless (barring ``HeaderLength``), little-endian, and
-interleaved by sample: every channel's value at time 0, then every channel's value
-at time 1, and so on. Reshaping to ``(samples, channels)`` therefore needs no
-transpose, and that is already the orientation NWB wants.
+The ``.dat`` file has no header beyond ``HeaderLength``, holds little-endian
+integers, and interleaves them by sample: every channel's value at time 0, then
+every channel's value at time 1, and so on. A reshape to ``(samples, channels)``
+needs no transpose, which is the orientation NWB uses.
 """
 
 import logging
@@ -39,10 +39,10 @@ def resolve_dat_path(lay_path: Path, dat_name: str) -> Path:
     disk.
 
     If the named file is absent, the only permitted substitute is a sibling with
-    the same stem as the ``.lay`` file. This function decodes any file at the
-    channel count, the dtype and the rate of this header. An unrelated ``.dat``
-    file therefore gives output that looks correct but holds the wrong recording.
-    A directory that holds a wrong pair must therefore give an error.
+    the same stem as the ``.lay`` file. The reader decodes whatever file it gets
+    at the channel count, the dtype, and the rate of this header, so an unrelated
+    ``.dat`` file yields output that looks correct and holds the wrong recording.
+    A directory that pairs the two wrongly has to be an error.
 
     Raise FileNotFoundError when nothing matches and ValueError when several
     siblings are equally plausible.
@@ -89,9 +89,9 @@ def resolve_dat_path(lay_path: Path, dat_name: str) -> Path:
 class PersystReader:
     """Windowed access to a Persyst recording's samples and metadata.
 
-    Presents the same surface the NWB writer needs regardless of whether the
-    recording is contiguous or stitched from segments, and never loads the whole
-    ``.dat`` into memory -- the samples stay memory-mapped.
+    Presents one surface to the NWB writer whether the recording is contiguous or
+    stitched from segments. The samples stay memory-mapped, so the whole ``.dat``
+    never loads into memory.
     """
 
     def __init__(
@@ -163,9 +163,9 @@ class PersystReader:
     def channel_names(self) -> tuple[str, ...]:
         """Channel labels in column order.
 
-        Case and inner spacing are preserved -- ``Fp1-Ref`` stays as written. The
-        trailing reference suffix is removed only when explicitly requested, since
-        the label as recorded is what clinicians recognise.
+        Case and inner spacing survive, so ``Fp1-Ref`` stays as written. The
+        trailing reference suffix comes off only on request, because the label as
+        recorded is the one clinicians recognize.
         """
         names = self.layout.channel_names
         if not self._strip_ref_suffix:
@@ -238,7 +238,7 @@ class PersystReader:
         """Derive the sample count from the ``.dat`` size.
 
         The header's own count is not trusted; file size is authoritative. Raise
-        ValueError when not even one whole sample is present -- an empty recording
+        ValueError when not even one whole sample is present: an empty recording
         is a truncated or mispaired file, not something worth converting.
         """
         info = self.layout.file_info

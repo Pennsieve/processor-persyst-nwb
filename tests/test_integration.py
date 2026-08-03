@@ -3,12 +3,12 @@
 ``NwbTimeseriesReader`` below is an ordinary consumer of an NWB
 ``ElectricalSeries``: it pairs data columns with electrode rows, derives a rate
 from either ``rate`` or ``timestamps``, splits on discontinuities, and scales to
-microvolts via ``conversion`` and ``unit``. Nothing in it is specific to any one
-pipeline -- it is the reading half of the format contract, written out so a change
-that would break a real consumer fails here first.
+microvolts through ``conversion`` and ``unit``. Nothing in it is specific to one
+pipeline. It is the reading half of the format contract, written out so that a
+change which would break a real consumer fails here first.
 
-This also happens to mirror how Pennsieve's ``processor-post-timeseries`` reads
-the file, which is why the segment-splitting threshold matches.
+It also mirrors how Pennsieve's ``processor-post-timeseries`` reads the file,
+which is why the segment-splitting threshold matches.
 """
 
 from zoneinfo import ZoneInfo
@@ -41,29 +41,30 @@ EXPECTED_DEVIATIONS = frozenset(
         "check_subject_species_exists",
         # A Subject with some fields set gives these two messages.
         # HUP1234_2000_02.lay has that form: [Patient] ID has a value, but Sex
-        # and Birthdate are blank. To omit the Subject and stop the messages also
-        # removes the one identifier that the header holds.
+        # and Birthdate are blank. Omitting the Subject would stop the messages
+        # and also drop the one identifier that the header holds.
         "check_subject_age",
         "check_subject_sex",
         # A Persyst point annotation has duration 0, so stop_time equals
-        # start_time. To discard or extend such an interval changes the event.
+        # start_time. Discarding or extending such an interval would change the
+        # event.
         "check_time_intervals_stop_after_start",
     }
 )
 """The nwbinspector checks that this converter cannot satisfy.
 
 Any other message at BEST_PRACTICE_VIOLATION or above is a defect. That level is
-necessary, because ``check_timestamps_ascending`` is at BEST_PRACTICE_VIOLATION
-and not at CRITICAL. A filter that used CRITICAL only cannot find timestamps
-that decrease, which is the failure that this check must catch.
+necessary because ``check_timestamps_ascending`` sits at BEST_PRACTICE_VIOLATION
+rather than CRITICAL, and a filter set to CRITICAL alone cannot find timestamps
+that decrease.
 """
 
 
 def assert_valid_nwb(path, *, allow=()):
     """Fail if the file does not pass nwbinspector and schema validation.
 
-    ``inspect_nwbfile`` also runs the pynwb schema validator. This function is
-    therefore the only check of output validity.
+    ``inspect_nwbfile`` also runs the pynwb schema validator, which makes this
+    the only validity check the tests need.
     """
     permitted = EXPECTED_DEVIATIONS | set(allow)
     messages = [
@@ -197,7 +198,7 @@ def test_contiguous_recording_reads_as_one_chunk(tmp_path, persyst_pair):
 
 
 def test_gapped_recording_splits_into_segments(tmp_path, persyst_pair):
-    # 4 segments of 250 samples, each starting 500 s apart -- 3 real gaps.
+    # 4 segments of 250 samples, each starting 500 s apart, so 3 real gaps.
     segments = [(0, 0.0), (250, 500.0), (500, 1000.0), (750, 1500.0)]
     io, reader = convert_and_open(
         tmp_path, persyst_pair, n_samples=1000, rate=250.0, segments=segments
@@ -239,9 +240,9 @@ def test_permuted_channel_map_pairs_labels_with_the_right_column(
 ):
     """A [ChannelMap] that is not in index order must not mislabel a column.
 
-    The index is the 1-based interleave position. The entry ``Fp2=1`` therefore
-    owns column 0 for any order of the lines. ``ramp_samples`` shows an exchange
-    of two columns, because column c holds ``c * 1000 + i``.
+    The index is the 1-based interleave position, so the entry ``Fp2=1`` owns
+    column 0 for any order of the lines. ``ramp_samples`` makes a column swap
+    visible, because column c holds ``c * 1000 + i``.
     """
     persyst_pair(tmp_path, stem="rec", n_samples=200, channels=("x",) * 4)
     # Rewrite [ChannelMap] with the labels in reverse index order.

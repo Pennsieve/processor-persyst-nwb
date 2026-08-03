@@ -1,9 +1,9 @@
 """Shared pytest fixtures.
 
-No real Persyst recordings are committed, so everything here synthesises them.
-The builders mirror the quirks found in real files -- Windows paths in ``File=``,
-two-digit years, fractional seconds, comma-laden comment text, NeuroPace
-sections -- so those variants stay covered without shipping patient data.
+No real Persyst recordings are committed, so everything here synthesizes them.
+The builders reproduce the quirks that real files contain: Windows paths in
+``File=``, two-digit years, fractional seconds, comma-laden comment text, and
+NeuroPace sections. Those variants stay covered without shipping patient data.
 """
 
 import numpy as np
@@ -36,8 +36,8 @@ def build_lay_text(
 
     ``waveform_count`` defaults to the channel count; pass a different value to
     reproduce the real disagreement between ``WaveformCount`` and
-    ``[ChannelMap]``. ``patient`` of None omits the section entirely, whereas an
-    empty dict emits it with blank values -- both occur in real files.
+    ``[ChannelMap]``. ``patient`` of None omits the section entirely, while an
+    empty dict emits it with blank values. Real files do both.
     """
     count = len(channels) if waveform_count is None else waveform_count
     lines = ["[FileInfo]", f"File={dat_name}", f"FileType={file_type}"]
@@ -104,8 +104,8 @@ def write_pair(
     """Write a matching ``.lay``/``.dat`` pair and return both paths.
 
     ``data`` defaults to a ramp sized to the channel list. ``header_length`` bytes
-    of filler are prepended to the ``.dat`` so the offset path can be exercised --
-    every real fixture has ``HeaderLength=0``.
+    of filler go in front of the ``.dat`` so the offset path gets covered; every
+    real fixture has ``HeaderLength=0``.
     """
     channels = lay_kwargs.get("channels", DEFAULT_CHANNELS)
     dtype = np.dtype("<i4") if datatype == 7 else np.dtype("<i2")

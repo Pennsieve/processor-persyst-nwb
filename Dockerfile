@@ -1,6 +1,6 @@
-# Pinned by digest, and not by tag. The `python:3.12` tag moves. This image is
-# the first stage of a clinical pipeline, and its output must not change because
-# a rebuild occurred on a different day. To update the digest, run:
+# Pinned by digest rather than by tag, because the `python:3.12` tag moves. This
+# image is the first stage of a clinical pipeline, so its output must not change
+# just because a rebuild happened on a different day. To update the digest, run:
 #   docker pull python:3.12-slim-bookworm
 #   docker image inspect python:3.12-slim-bookworm --format '{{index .RepoDigests 0}}'
 FROM python@sha256:d50fb7611f86d04a3b0471b46d7557818d88983fc3136726336b2a4c657aa30b
@@ -25,10 +25,10 @@ COPY processor/ /app/processor
 ENV PYTHONPATH="/app"
 
 # The `import pynwb` statement builds a schema cache in XDG_CACHE_HOME before the
-# converter starts. That path must be writable by any UID that the platform
-# selects, and not only by appuser. The build therefore creates the cache and
-# keeps it writable for all users, and HOME points to a writable directory.
-# Without these two settings, the image runs only as root.
+# converter starts. That path must be writable by any UID the platform selects,
+# not only by appuser, so the build creates the cache and keeps it writable for
+# all users, and HOME points to a writable directory. Without these two settings
+# the image runs only as root.
 ENV HOME=/tmp \
 	XDG_CACHE_HOME=/app/.cache
 RUN mkdir -p /app/.cache \

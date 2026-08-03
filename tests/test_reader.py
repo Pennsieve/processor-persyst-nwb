@@ -42,8 +42,8 @@ def test_dtype_follows_datatype(tmp_path, persyst_pair, datatype):
 def test_recovers_known_sine_frequencies(tmp_path):
     """A 2-channel file whose header claims 4 waveforms must decode as 2.
 
-    This mirrors wave_sin, whose .dat divides evenly at both 2 and 4 channels --
-    so only the recovered frequencies can prove which width is right.
+    This mirrors wave_sin, whose .dat divides evenly at both 2 and 4 channels, so
+    only the recovered frequencies can prove which width is right.
     """
     rate, n = 800.0, 12000
     t = np.arange(n) / rate
@@ -156,9 +156,9 @@ def test_no_dat_raises(tmp_path, persyst_pair):
 def test_unrelated_siblings_raise_rather_than_convert(tmp_path, persyst_pair):
     """No sibling has the lay stem, so there is no safe substitute.
 
-    The reader decodes any file at the channel count, the dtype and the rate of
-    this header. An unrelated .dat file therefore gives output that looks correct
-    but holds the wrong recording.
+    The reader decodes whatever file it gets at the channel count, the dtype, and
+    the rate of this header, so an unrelated .dat file yields output that looks
+    correct and holds the wrong recording.
     """
     lay, _ = persyst_pair(tmp_path, stem="rec", dat_name="missing.dat")
     (tmp_path / "other.dat").write_bytes(b"\x00" * 64)
@@ -189,8 +189,8 @@ def _case_sensitive_filesystem(directory):
 def test_two_stem_matching_dats_are_ambiguous(tmp_path, persyst_pair):
     """rec.dat and rec.DAT are equally valid, so the reader must not select one.
 
-    This test needs a filesystem that keeps the two names apart. macOS combines
-    them into one file. The container runs on Linux, which keeps them apart.
+    This test needs a filesystem that keeps the two names apart. macOS folds them
+    into one file; the container runs on Linux, which does not.
     """
     if not _case_sensitive_filesystem(tmp_path):
         pytest.skip("case-insensitive filesystem cannot hold both names")
@@ -271,10 +271,10 @@ def test_reader_matches_mne_on_a_lay_mne_accepts(tmp_path):
 
     MNE cannot read any of the four real Persyst fixtures: it rejects two-digit
     years, fractional TestTime, Windows paths in File=, and a missing [Patient]
-    section, and additionally requires both a Hand field and a parseable
-    BirthDate. So the header below is written specifically to suit it -- which is
-    also why MNE is not the runtime reader. It still makes a good oracle for the
-    parts it does handle: dtype, interleaving and calibration.
+    section, and it also requires both a Hand field and a parseable BirthDate. The
+    header below is written to suit MNE, which is also why MNE is not the runtime
+    reader. It remains a good oracle for the parts it does handle: dtype,
+    interleaving, and calibration.
     """
     mne = pytest.importorskip("mne")
     mne.set_log_level("ERROR")
@@ -307,6 +307,6 @@ def test_reader_matches_mne_on_a_lay_mne_accepts(tmp_path):
 
     assert list(reader.channel_names) == raw.ch_names
     assert reader.sampling_rate == raw.info["sfreq"]
-    # MNE returns volts; we store counts plus a conversion factor.
+    # MNE returns volts; the converter stores counts plus a conversion factor.
     ours = reader.read_window(0, n).astype(np.float64) * reader.conversion
     np.testing.assert_allclose(ours, raw.get_data().T, rtol=1e-9, atol=0)

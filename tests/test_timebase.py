@@ -264,8 +264,8 @@ def test_millisecond_quantised_boundaries_do_not_fake_gaps(rate):
 
     Persyst writes [SampleTimes] to three decimals, an error of up to 500 us.
     Above ~1024 Hz that exceeds the 2/rate gap threshold, so without snapping a
-    perfectly contiguous 2048 Hz recording reports gaps and can even produce
-    non-monotonic timestamps.
+    contiguous 2048 Hz recording reports gaps and can produce non-monotonic
+    timestamps.
     """
     rng = np.random.default_rng(0)
     lengths = rng.integers(int(rate * 0.7), int(rate * 1.3), size=40)
