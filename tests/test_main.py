@@ -27,6 +27,15 @@ def test_find_layout_file_is_case_insensitive(tmp_path, persyst_pair):
     assert find_layout_file(tmp_path) == upper
 
 
+def test_find_layout_file_in_nested_folder(tmp_path, persyst_pair):
+    # The workflow runner stages a collection under its own folder name, so the
+    # header sits one level below INPUT_DIR rather than directly inside it.
+    nested = tmp_path / "recording_folder"
+    nested.mkdir()
+    lay, _ = persyst_pair(nested)
+    assert find_layout_file(tmp_path) == lay
+
+
 def test_find_layout_file_none_raises(tmp_path):
     with pytest.raises(FileNotFoundError, match="found none"):
         find_layout_file(tmp_path)

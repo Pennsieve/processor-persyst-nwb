@@ -22,7 +22,7 @@ _LAY_SUFFIX = ".lay"
 
 
 def find_layout_file(input_dir: Path) -> Path:
-    """Find the single ``.lay`` file in ``input_dir``.
+    """Find the single ``.lay`` file in ``input_dir`` or any folder below it.
 
     Matching ignores case because Persyst recordings arrive from Windows. A
     Persyst package holds exactly one header, so raise FileNotFoundError when
@@ -33,7 +33,7 @@ def find_layout_file(input_dir: Path) -> Path:
 
     candidates = sorted(
         path
-        for path in input_dir.iterdir()
+        for path in input_dir.rglob("*")
         if path.is_file() and path.suffix.lower() == _LAY_SUFFIX
     )
     if not candidates:
