@@ -41,7 +41,7 @@ These environment variables change the defaults. All are optional. On Pennsieve 
 |---|---|---|
 | `INPUT_DIR` | `/data/input` | Directory that holds one `.lay` file and its `.dat` file |
 | `OUTPUT_DIR` | `/data/output` | Directory to write the NWB file to |
-| `OUTPUT_FILENAME` | `<lay stem>.nwb` | Name of the output file. Must be a bare filename |
+| `OUTPUT_FILENAME` | `<lay stem>.nwb` | Name of the output file. Must be a bare filename. The Pennsieve manifest sets `persyst_recording.nwb`, because the workflow builder treats a parameter with no default as required |
 | `PERSYST_TIMEZONE` | `UTC` | Time zone for `TestDate` and `TestTime` |
 | `CHUNK_TARGET_BYTES` | `4194304` | Target size of one HDF5 chunk |
 | `COMPRESSION_LEVEL` | `4` | gzip level. Set to `0` to disable compression |
