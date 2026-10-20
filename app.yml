@@ -1,43 +1,59 @@
-# yaml-language-server: $schema=https://app.pennsieve.io/static/schemas/app-manifest.v1.json
 schemaVersion: '1.0'
-name: Processor Persyst NWB
-description: Convert a Persyst recording (.lay + .dat) into an NWB file
-applicationType: processor
+application:
+  name: processor-persyst-nwb
+  description: Convert a Persyst recording (.lay + .dat) into an NWB file
+  type: processor
 runtime:
-  computeTypes:
-    - standard
-resources:
   cpu: 4096
   memory: 12288
+  computeTypes:
+    - standard
 parameters:
   - name: OUTPUT_FILENAME
     type: string
-    description: Bare filename (no path) for the NWB output file. Defaults to the stem of the .lay file when unset
-    default: ''
+    required: false
+    description: Bare filename (no path) for the NWB output file, which the next workflow step reads. Must end in .nwb
+    defaultValue: persyst_recording.nwb
   - name: PERSYST_TIMEZONE
     type: string
+    required: false
     description: IANA timezone name used to interpret the recording's wall-clock start time
-    default: UTC
+    defaultValue: UTC
   - name: CHUNK_TARGET_BYTES
     type: number
+    required: false
     description: Target byte size for one HDF5 chunk of sample/timestamp data
-    default: 4194304
+    defaultValue: '4194304'
     min: 1
   - name: COMPRESSION_LEVEL
     type: number
+    required: false
     description: gzip level for the sample and timestamp datasets; 0 disables compression
-    default: 4
+    defaultValue: '4'
     min: 0
     max: 9
   - name: STRIP_REF_SUFFIX
     type: boolean
+    required: false
     description: Whether to strip the reference-electrode suffix from channel names
-    default: false
+    defaultValue: 'false'
   - name: WRITE_COMMENTS
     type: boolean
+    required: false
     description: Whether to include Persyst [Comments] annotations as an NWB TimeIntervals table
-    default: true
+    defaultValue: 'true'
   - name: WRITE_SUBJECT_METADATA
     type: boolean
+    required: false
     description: Whether to include the [Patient] subject block, which holds PII, in the NWB output file
-    default: false
+    defaultValue: 'false'
+inputs:
+  - name: Persyst Recording
+    dataType: application/octet-stream
+    required: true
+    description: One .lay file and its associated .dat sample-data file in INPUT_DIR
+outputs:
+  - name: NWB Timeseries
+    # Keep this type aligned with the processor-post-timeseries input.
+    dataType: application/octet-stream
+    description: One .nwb file containing raw ElectricalSeries acquisitions
